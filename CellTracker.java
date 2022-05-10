@@ -12,14 +12,30 @@ public class CellTracker implements PlugIn {
 	public void run(String arg) {
 		
 		ImagePlus imp = IJ.getImage();
-		ImagePlus imp_ch = imp.crop("slice=2"); 
+		// Meaning of the numbers in Duplicator:
+		// firstC, lastC, firstZ, lastZ, firstT, lastT
+		// For experiment 1, the slice 2 is better for the channel detection
+		int bestZ = 2;
+		int lastT = imp.getNFrames();
+		// Extract only the second slice in the image
+		ImagePlus aligned_stack = new ij.plugin.Duplicator().run(imp, 1, 1, bestZ, bestZ, 1, lastT);
+		aligned_stack.show(); 
+		// Align the images across time
+		IJ.run(aligned_stack, "StackReg ", "transformation=Affine");
+		
+		// TODO get the ROI on of the wells/channels on ONE frame from the aligned stack 
+		
+		//ImagePlus imp_ch = imp.crop("slice=2, frames=1-270");
+		//imp_ch.setTitle("test"); 
+		//imp_ch.show(); 
+		//IJ.selectWindow("test");
 		//IJ.run("Duplicate...", "duplicate slices=2");
-		IJ.run(imp_ch, "Find Edges", "stack");
+		//IJ.run(imp_ch, "Find Edges", "stack");
 		//IJ.run("Threshold...");
-		IJ.setAutoThreshold(imp_ch, "Minimum dark");
+		//IJ.setAutoThreshold(imp_ch, "Minimum dark");
 		//IJ.run("Threshold...");
-		IJ.run(imp_ch, "Analyze Particles...", "size=150-Infinity circularity=0.00-0.13 show=[Overlay Masks] clear add stack");
-		imp_ch.show();
+		//IJ.run(imp_ch, "Analyze Particles...", "size=150-Infinity circularity=0.00-0.13 show=[Overlay Masks] clear add stack");
+		//imp_ch.show();
 		
 		
 		/*
