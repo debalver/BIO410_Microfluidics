@@ -5,25 +5,47 @@ import ij.gui.Overlay;
 import ij.plugin.ImageCalculator;
 import ij.plugin.PlugIn;
 import ij.process.ImageProcessor;
+import ij.Prefs; 
+import ij.WindowManager; 
 // No need to import Spot if it is in the same folder
 
 public class CellTracker implements PlugIn {
 	@Override
 	public void run(String arg) {
 		
-		ImagePlus imp = IJ.getImage();
-		// Meaning of the numbers in Duplicator:
-		// firstC, lastC, firstZ, lastZ, firstT, lastT
-		// For experiment 1, the slice 2 is better for the channel detection
-		int bestZ = 2;
-		int lastT = imp.getNFrames();
-		// Extract only the second slice in the image
-		ImagePlus aligned_stack = new ij.plugin.Duplicator().run(imp, 1, 1, bestZ, bestZ, 1, lastT);
-		aligned_stack.show(); 
-		// Align the images across time
-		IJ.run(aligned_stack, "StackReg ", "transformation=Affine");
+		ImagePlus original = IJ.getImage();
+		ImagePlus aligned_stack_cells = null; 
+		ImagePlus aligned_stack_wells = null; 
 		
-		// TODO get the ROI on of the wells/channels on ONE frame from the aligned stack 
+		// During development we directly work on the aligned images
+		boolean align = false; 
+		if (align) {
+			// Meaning of the numbers in Duplicator:
+			// firstC, lastC, firstZ, lastZ, firstT, lastT
+			// For experiment 1, the slice 2 is better for the channel detection
+			int bestZ_wells = 2;
+			int bestZ_cells = 1; 
+			int lastT = original.getNFrames();
+			// Extract only the second slice in the image
+			aligned_stack_wells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_wells, bestZ_wells, 1, lastT); 
+			aligned_stack_cells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_cells, bestZ_cells, 1, lastT); 
+			// Align the images across time
+			IJ.run(aligned_stack_wells, "StackReg ", "transformation=Affine");
+			IJ.run(aligned_stack_cells, "StackReg ", "transformation=Affine");
+		} else {
+			aligned_stack_wells = original;
+			aligned_stack_cells = original;
+		}
+		aligned_stack_cells.show();
+		
+		// TODO Code the function that tracks the microfluidic wells
+		track_wells(aligned_stack_wells); 
+		
+		// TODO Run particle analysis per frame and return the ROI manager
+		track_cells(aligned_stack_cells);
+		
+		
+		
 		
 		//ImagePlus imp_ch = imp.crop("slice=2, frames=1-270");
 		//imp_ch.setTitle("test"); 
@@ -60,6 +82,37 @@ public class CellTracker implements PlugIn {
 		 * current.get_nearest_neighbour(lambda, d_max, s_max, thres); } } } Overlay
 		 * overlay = new Overlay(); draw(overlay, spots); imp.setOverlay(overlay);
 		 */
+		
+		
+	}
+	
+	
+	public void track_cells(ImagePlus input) {
+			
+			ImagePlus imp = input.duplicate();
+			// Get a mask with only the cells 
+			imp.setDisplayRange(2502, 2876);
+			IJ.run(imp, "Apply LUT", "stack");
+			IJ.setAutoThreshold(imp, "Default no-reset");
+			Prefs.blackBackground = false;
+			IJ.run(imp, "Convert to Mask", "method=Default background=Light calculate");
+			ImagePlus imp2 = imp.duplicate();
+			// Get the DOG 
+			IJ.run(imp, "Gaussian Blur...", "sigma=7.05 stack");
+			IJ.run(imp2, "Gaussian Blur...", "sigma=5 stack");
+			//ImagePlus imp1 = WindowManager.getImage("p1_stabilised_cells.tif");
+			//ImagePlus imp2 = WindowManager.getImage("p1_stabilised_cells-1.tif");
+			ImagePlus imp3 = ImageCalculator.run(imp2, imp, "Subtract create stack");
+			imp3.show();
+			// Make binary and get only the edges of the cells
+			IJ.setAutoThreshold(imp3, "Default no-reset");
+			IJ.run(imp3, "Convert to Mask", "method=Default background=Light calculate");
+			IJ.run(imp3, "Analyze Particles...", "size=200-Infinity circularity=0.50-1.00 show=Overlay clear add stack");
+			imp3.show();
+	}
+	
+	public void track_wells(ImagePlus input) {
+		ImagePlus imp = input.duplicate(); 
 	}
 
 	private void draw(Overlay overlay, ArrayList<Spot> spots[]) {
