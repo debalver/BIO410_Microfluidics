@@ -1,12 +1,19 @@
 import java.util.ArrayList;
 import ij.IJ;
 import ij.ImagePlus;
+import ij.ImageStack;
 import ij.gui.Overlay;
+import ij.gui.PolygonRoi;
+import ij.gui.Roi;
 import ij.plugin.ImageCalculator;
 import ij.plugin.PlugIn;
+import ij.plugin.RoiEnlarger;
+import ij.plugin.frame.RoiManager;
+import ij.process.ByteProcessor;
 import ij.process.ImageProcessor;
 import ij.Prefs; 
 import ij.WindowManager; 
+import ij.gui.Overlay; 
 // No need to import Spot if it is in the same folder
 
 public class CellTracker implements PlugIn {
@@ -30,23 +37,21 @@ public class CellTracker implements PlugIn {
 			aligned_stack_wells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_wells, bestZ_wells, 1, lastT); 
 			aligned_stack_cells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_cells, bestZ_cells, 1, lastT); 
 			// Align the images across time
+			aligned_stack_wells.show(); 
 			IJ.run(aligned_stack_wells, "StackReg ", "transformation=Affine");
 			IJ.run(aligned_stack_cells, "StackReg ", "transformation=Affine");
 		} else {
-			aligned_stack_wells = original;
-			aligned_stack_cells = original;
+			aligned_stack_wells = IJ.openImage("/Users/quentindevaud/Desktop/EPFL/Master/MA2/Bioimage informatics/Mini_project/images/p1_stabilised_cells.tif");;
+			aligned_stack_cells = IJ.openImage("/Users/quentindevaud/Desktop/EPFL/Master/MA2/Bioimage informatics/Mini_project/images/p1_stabilised_cells.tif");;
 		}
-		aligned_stack_cells.show();
+		//aligned_stack_cells.show();
 		
-		// TODO Code the function that tracks the microfluidic wells
-		track_wells(aligned_stack_wells); 
+		RoiManager rm = track_wells(aligned_stack_wells); 
+		ImagePlus cells_only = remove_background(rm, aligned_stack_wells, aligned_stack_cells); 
+		// TODO improve the tracking of the cells
+		//track_cells(cells_only); 
 		
-		// TODO Run particle analysis per frame and return the ROI manager
-		track_cells(aligned_stack_cells);
-		
-		
-		
-		
+
 		//ImagePlus imp_ch = imp.crop("slice=2, frames=1-270");
 		//imp_ch.setTitle("test"); 
 		//imp_ch.show(); 
@@ -87,9 +92,8 @@ public class CellTracker implements PlugIn {
 	}
 	
 	
-	public void track_cells(ImagePlus input) {
+	public void track_cells(ImagePlus imp) {
 			
-			ImagePlus imp = input.duplicate();
 			// Get a mask with only the cells 
 			imp.setDisplayRange(2502, 2876);
 			IJ.run(imp, "Apply LUT", "stack");
@@ -103,16 +107,73 @@ public class CellTracker implements PlugIn {
 			//ImagePlus imp1 = WindowManager.getImage("p1_stabilised_cells.tif");
 			//ImagePlus imp2 = WindowManager.getImage("p1_stabilised_cells-1.tif");
 			ImagePlus imp3 = ImageCalculator.run(imp2, imp, "Subtract create stack");
-			imp3.show();
 			// Make binary and get only the edges of the cells
 			IJ.setAutoThreshold(imp3, "Default no-reset");
 			IJ.run(imp3, "Convert to Mask", "method=Default background=Light calculate");
-			IJ.run(imp3, "Analyze Particles...", "size=200-Infinity circularity=0.50-1.00 show=Overlay clear add stack");
+			IJ.run(imp3, "Analyze Particles...", "size=200-Infinity circularity=0.35-1.00 show=Overlay clear add stack");
 			imp3.show();
 	}
 	
-	public void track_wells(ImagePlus input) {
-		ImagePlus imp = input.duplicate(); 
+	public RoiManager track_wells(ImagePlus input) {
+		// Extract only one image as the wells do not move across time 
+		ImagePlus imp_ch = input.crop("whole-slice");
+		imp_ch.setTitle("Segmented channels");
+		IJ.run(imp_ch, "Find Edges", "stack");
+		IJ.setAutoThreshold(imp_ch, "Default dark no-reset");
+		Prefs.blackBackground = false;
+		IJ.run(imp_ch, "Convert to Mask", "method=Default background=Dark calculate");
+		IJ.run(imp_ch, "Fill Holes", "stack");
+		// Close the Threshold window and its output
+		//IJ.run("Close", "Threshold");
+		//IJ.resetThreshold(input);
+		
+		// Analyse the particles TODO need fine tuning of parameters
+		IJ.run(imp_ch, "Analyze Particles...", "size=1000-Infinity circularity=0.00-0.50 show=[Overlay Masks] clear include add stack");
+		//imp_ch.show();
+		
+		// Work with rois
+		IJ.run("From ROI Manager", "");
+		RoiManager rm = RoiManager.getInstance();
+		/*int n = rm.getCount();
+		for(int i=0;i<=n-1;i++) {
+			rm.select(i);
+			if (i == 5) { //C'est juste pour voir que �a fonctionne mais il faudra avoir une autre condition ici
+				rm.runCommand("Set Color", "red");
+			}
+			else {
+				rm.runCommand("Set Color", "green");
+			}
+		}
+		//sub.close();
+		rm.runCommand(input, "Show All without labels");*/
+		return rm;
+	}
+	
+	public ImagePlus remove_background(RoiManager rm, ImagePlus wells, ImagePlus cells) {
+		Roi[] listRois  = rm.getRoisAsArray();
+		Overlay overlay = new Overlay(); 
+		for(int i=0;i<=listRois.length-1;i++) {
+			// Gather the overlays from the roi manager and shrink them  
+			overlay.add(RoiEnlarger.enlarge(listRois[i], -3)); 
+		}
+		wells.setOverlay(overlay);
+		// Extract the mask from the overlays
+		ByteProcessor mask = wells.createRoiMask();
+		//input.show(); 
+		// Convert the mask to a binary image
+		ImageStack stack = new ImageStack(); 
+		stack.addSlice(mask); 
+		ImagePlus impMask = new ImagePlus("Masks", stack); 
+		// Convert the image to 16 bits, and stretch to maximal values
+		IJ.run(impMask, "16-bit", "");
+		IJ.run(impMask, "Multiply...", "value=258");
+		// Invert such that the channels are black (value=0) and surroundings are white
+		IJ.run(impMask, "Invert", "");
+		//impMask.show();
+		// Remove background to original image
+		ImagePlus imp3 = ImageCalculator.run(cells, impMask, "Subtract create stack");
+		imp3.show(); 
+		return imp3; 
 	}
 
 	private void draw(Overlay overlay, ArrayList<Spot> spots[]) {
