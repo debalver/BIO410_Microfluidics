@@ -14,6 +14,7 @@ import ij.process.ImageProcessor;
 import ij.Prefs; 
 import ij.WindowManager; 
 import ij.gui.Overlay; 
+import ij.measure.ResultsTable;
 // No need to import Spot if it is in the same folder
 
 public class CellTracker implements PlugIn {
@@ -43,13 +44,17 @@ public class CellTracker implements PlugIn {
 		} else {
 			aligned_stack_wells = IJ.openImage("/Users/quentindevaud/Desktop/EPFL/Master/MA2/Bioimage informatics/Mini_project/images/p1_stabilised_cells.tif");;
 			aligned_stack_cells = IJ.openImage("/Users/quentindevaud/Desktop/EPFL/Master/MA2/Bioimage informatics/Mini_project/images/p1_stabilised_cells.tif");;
+			aligned_stack_wells = original;
+			aligned_stack_cells = original;
+			
 		}
 		//aligned_stack_cells.show();
 		
 		RoiManager rm = track_wells(aligned_stack_wells); 
 		ImagePlus cells_only = remove_background(rm, aligned_stack_wells, aligned_stack_cells); 
 		// TODO improve the tracking of the cells
-		//track_cells(cells_only); 
+		ArrayList<ArrayList<ArrayList<Double>>> cells_position = track_cells(cells_only);
+		draw_wells(rm, cells_position);
 		
 
 		//ImagePlus imp_ch = imp.crop("slice=2, frames=1-270");
@@ -92,9 +97,9 @@ public class CellTracker implements PlugIn {
 	}
 	
 	
-	public void track_cells(ImagePlus imp) {
+	public ArrayList<ArrayList<ArrayList<Double>>> track_cells(ImagePlus imp) {
 			
-			// Get a mask with only the cells 
+			// Get a mask with only the cells
 			imp.setDisplayRange(2502, 2876);
 			IJ.run(imp, "Apply LUT", "stack");
 			IJ.setAutoThreshold(imp, "Default no-reset");
@@ -106,12 +111,34 @@ public class CellTracker implements PlugIn {
 			IJ.run(imp2, "Gaussian Blur...", "sigma=5 stack");
 			//ImagePlus imp1 = WindowManager.getImage("p1_stabilised_cells.tif");
 			//ImagePlus imp2 = WindowManager.getImage("p1_stabilised_cells-1.tif");
-			ImagePlus imp3 = ImageCalculator.run(imp2, imp, "Subtract create stack");
+			//ImagePlus imp3 = ImageCalculator.run(imp2, imp, "Subtract create stack");
 			// Make binary and get only the edges of the cells
-			IJ.setAutoThreshold(imp3, "Default no-reset");
-			IJ.run(imp3, "Convert to Mask", "method=Default background=Light calculate");
-			IJ.run(imp3, "Analyze Particles...", "size=200-Infinity circularity=0.35-1.00 show=Overlay clear add stack");
-			imp3.show();
+			//IJ.setAutoThreshold(imp3, "Default no-reset");
+			//IJ.run(imp3, "Convert to Mask", "method=Default background=Light calculate");
+			//IJ.run(imp3, "Analyze Particles...", "size=200-Infinity circularity=0.35-1.00 show=Overlay clear add stack");
+			//imp3.show();
+			int nt = imp.getNFrames();
+			ArrayList<ArrayList<ArrayList<Double>>> Values_RT = new ArrayList<ArrayList<ArrayList<Double>>>();
+			for (int t = 0; t < nt-1; t++) {
+				ArrayList<ArrayList<Double>> matrix = new ArrayList<ArrayList<Double>>();
+				imp2.setSlice(t);
+				IJ.run(imp2, "Find Maxima...", "prominence=10 output=List");
+				ResultsTable RT1 = ResultsTable.getResultsTable();
+				ArrayList<Double> Xs = new ArrayList<Double>();
+				ArrayList<Double> Ys = new ArrayList<Double>();
+				for (int i = 0; i < RT1.size(); i++) {
+					double X = RT1.getValue("X", i);
+					double Y = RT1.getValue("Y", i);
+					Xs.add(X);
+					Ys.add(Y);
+				}
+				matrix.add(Xs);
+				matrix.add(Ys);
+				Values_RT.add(matrix);
+			}
+			IJ.selectWindow("Results"); 
+			IJ.run("Close");
+			return Values_RT;
 	}
 	
 	public RoiManager track_wells(ImagePlus input) {
@@ -128,25 +155,48 @@ public class CellTracker implements PlugIn {
 		//IJ.resetThreshold(input);
 		
 		// Analyse the particles TODO need fine tuning of parameters
-		IJ.run(imp_ch, "Analyze Particles...", "size=1000-Infinity circularity=0.00-0.50 show=[Overlay Masks] clear include add stack");
+		IJ.run(imp_ch, "Analyze Particles...", "size=1000-100000 circularity=0.00-0.50 show=[Overlay Masks] exclude clear overlay add");
 		//imp_ch.show();
 		
 		// Work with rois
 		IJ.run("From ROI Manager", "");
 		RoiManager rm = RoiManager.getInstance();
-		/*int n = rm.getCount();
+		return rm;
+	}
+	
+	void draw_wells(RoiManager rm, ArrayList<ArrayList<ArrayList<Double>>> cells_position) {
+		int wells_length = 350;
+		int wells_height = 60;
+		int n = rm.getCount();
+		rm.runCommand("List");
+		ResultsTable RT1 = ResultsTable.getResultsTable("Overlay Elements of Result of p1_stabilised_cells.tif");
+		ArrayList<Double> Xs_wells = new ArrayList<Double>();
+		ArrayList<Double> Ys_wells = new ArrayList<Double>();
+		for (int i = 0; i < RT1.size(); i++) {
+			double X = RT1.getValue("X", i);
+			double Y = RT1.getValue("Y", i);
+			Xs_wells.add(X);
+			Ys_wells.add(Y);
+		}
+		ArrayList<ArrayList<Double>> first_frame = cells_position.get(0);
+		ArrayList<Double> Xs_cells = first_frame.get(0);
+		ArrayList<Double> Ys_cells = first_frame.get(1);
 		for(int i=0;i<=n-1;i++) {
 			rm.select(i);
-			if (i == 5) { //C'est juste pour voir que �a fonctionne mais il faudra avoir une autre condition ici
+			boolean isInside = false;
+			for (int k=0; k<=Xs_cells.size()-1; k++) {
+				if (Xs_cells.get(k) > Xs_wells.get(i) && Xs_cells.get(k) < Xs_wells.get(i) + wells_length & Ys_cells.get(k) > Ys_wells.get(i) & Ys_cells.get(k) < Ys_wells.get(i) + wells_height) {
+					isInside = true;
+				}
+			}
+			if (isInside) {
 				rm.runCommand("Set Color", "red");
 			}
 			else {
 				rm.runCommand("Set Color", "green");
 			}
 		}
-		//sub.close();
-		rm.runCommand(input, "Show All without labels");*/
-		return rm;
+		rm.runCommand("Show all");
 	}
 	
 	public ImagePlus remove_background(RoiManager rm, ImagePlus wells, ImagePlus cells) {
