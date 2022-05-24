@@ -53,8 +53,8 @@ public class CellTracker implements PlugIn {
 		RoiManager rm = track_wells(aligned_stack_wells); 
 		ImagePlus cells_only = remove_background(rm, aligned_stack_wells, aligned_stack_cells); 
 		// TODO improve the tracking of the cells
-		ArrayList<ArrayList<ArrayList<Double>>> cells_position = track_cells(cells_only);
-		draw_wells(rm, cells_position);
+		ArrayList<ArrayList<ArrayList<Double>>> cells_position = track_cells(cells_only); // Position of the cells in terms of numbers of frames, X and Y, number of cells per frame
+		draw_wells(rm, cells_position); // Draw color if cell is inside well
 		
 
 		//ImagePlus imp_ch = imp.crop("slice=2, frames=1-270");
@@ -100,14 +100,14 @@ public class CellTracker implements PlugIn {
 	public ArrayList<ArrayList<ArrayList<Double>>> track_cells(ImagePlus imp) {
 			
 			// Get a mask with only the cells
-			imp.setDisplayRange(2502, 2876);
+			imp.setDisplayRange(2502, 2876); // TODO: Need automatic computation of these values
 			IJ.run(imp, "Apply LUT", "stack");
 			IJ.setAutoThreshold(imp, "Default no-reset");
 			Prefs.blackBackground = false;
 			IJ.run(imp, "Convert to Mask", "method=Default background=Light calculate");
 			ImagePlus imp2 = imp.duplicate();
 			// Get the DOG 
-			IJ.run(imp, "Gaussian Blur...", "sigma=7.05 stack");
+			IJ.run(imp, "Gaussian Blur...", "sigma=7.05 stack"); // Not used
 			IJ.run(imp2, "Gaussian Blur...", "sigma=5 stack");
 			//ImagePlus imp1 = WindowManager.getImage("p1_stabilised_cells.tif");
 			//ImagePlus imp2 = WindowManager.getImage("p1_stabilised_cells-1.tif");
@@ -117,11 +117,11 @@ public class CellTracker implements PlugIn {
 			//IJ.run(imp3, "Convert to Mask", "method=Default background=Light calculate");
 			//IJ.run(imp3, "Analyze Particles...", "size=200-Infinity circularity=0.35-1.00 show=Overlay clear add stack");
 			//imp3.show();
-			int nt = imp.getNFrames();
+			int nt = imp2.getNFrames();
 			ArrayList<ArrayList<ArrayList<Double>>> Values_RT = new ArrayList<ArrayList<ArrayList<Double>>>();
-			for (int t = 0; t < nt-1; t++) {
+			for (int t = 0; t < nt-1; t++) { // loop over frames
 				ArrayList<ArrayList<Double>> matrix = new ArrayList<ArrayList<Double>>();
-				imp2.setSlice(t);
+				imp2.setSlice(t); // select slice
 				IJ.run(imp2, "Find Maxima...", "prominence=10 output=List");
 				ResultsTable RT1 = ResultsTable.getResultsTable();
 				ArrayList<Double> Xs = new ArrayList<Double>();
@@ -165,15 +165,15 @@ public class CellTracker implements PlugIn {
 	}
 	
 	void draw_wells(RoiManager rm, ArrayList<ArrayList<ArrayList<Double>>> cells_position) {
-		int wells_length = 350;
-		int wells_height = 60;
 		int n = rm.getCount();
-		rm.runCommand("List");
-		ResultsTable RT1 = ResultsTable.getResultsTable("Overlay Elements of Result of p1_stabilised_cells.tif");
+		rm.runCommand("List"); 
+		ResultsTable RT1 = ResultsTable.getResultsTable("Overlay Elements of Result of p1_stabilised_cells.tif"); //TODO: Change the title
+		double wells_width = RT1.getValue("Width", 0);	// Retrieve width of wells
+		double wells_height = RT1.getValue("Height", 0); // Retrieve height of wells
 		ArrayList<Double> Xs_wells = new ArrayList<Double>();
 		ArrayList<Double> Ys_wells = new ArrayList<Double>();
 		for (int i = 0; i < RT1.size(); i++) {
-			double X = RT1.getValue("X", i);
+			double X = RT1.getValue("X", i); // Retrieve the position in the upper-left corner of the rectangle around the wells
 			double Y = RT1.getValue("Y", i);
 			Xs_wells.add(X);
 			Ys_wells.add(Y);
@@ -184,16 +184,17 @@ public class CellTracker implements PlugIn {
 		for(int i=0;i<=n-1;i++) {
 			rm.select(i);
 			boolean isInside = false;
+			// Check if any cells are inside any wells
 			for (int k=0; k<=Xs_cells.size()-1; k++) {
-				if (Xs_cells.get(k) > Xs_wells.get(i) && Xs_cells.get(k) < Xs_wells.get(i) + wells_length & Ys_cells.get(k) > Ys_wells.get(i) & Ys_cells.get(k) < Ys_wells.get(i) + wells_height) {
+				if (Xs_cells.get(k) > Xs_wells.get(i) && Xs_cells.get(k) < Xs_wells.get(i) + wells_width & Ys_cells.get(k) > Ys_wells.get(i) & Ys_cells.get(k) < Ys_wells.get(i) + wells_height) {
 					isInside = true;
 				}
 			}
 			if (isInside) {
-				rm.runCommand("Set Color", "red");
+				rm.runCommand("Set Color", "green"); // If inside -> color = green
 			}
 			else {
-				rm.runCommand("Set Color", "green");
+				rm.runCommand("Set Color", "red"); // if not inside -> color = red
 			}
 		}
 		rm.runCommand("Show all");
