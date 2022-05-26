@@ -25,6 +25,10 @@ public class CellTracker implements PlugIn {
 		ImagePlus aligned_stack_cells = null; 
 		ImagePlus aligned_stack_wells = null; 
 		
+		
+		////////////////////////////////////////// Part for aligning the images /////////////////////////////////////////////////////
+		
+		
 		// During development we directly work on the aligned images
 		boolean align = false; 
 		if (align) {
@@ -42,60 +46,69 @@ public class CellTracker implements PlugIn {
 			IJ.run(aligned_stack_wells, "StackReg ", "transformation=Affine");
 			IJ.run(aligned_stack_cells, "StackReg ", "transformation=Affine");
 		} else {
-			aligned_stack_wells = IJ.openImage("/Users/quentindevaud/Desktop/EPFL/Master/MA2/Bioimage informatics/Mini_project/images/p1_stabilised_cells.tif");;
-			aligned_stack_cells = IJ.openImage("/Users/quentindevaud/Desktop/EPFL/Master/MA2/Bioimage informatics/Mini_project/images/p1_stabilised_cells.tif");;
-			aligned_stack_wells = original;
-			aligned_stack_cells = original;
+			aligned_stack_wells = IJ.openImage("/Users/quentindevaud/Desktop/EPFL/Master/MA2/Bioimage informatics/Mini_project/images/p1_stabilised_cells.tif");
+			aligned_stack_cells = IJ.openImage("/Users/quentindevaud/Desktop/EPFL/Master/MA2/Bioimage informatics/Mini_project/images/p1_stabilised_cells.tif");
+			//aligned_stack_wells = original;
+			//aligned_stack_cells = original;
 			
 		}
-		//aligned_stack_cells.show();
+		// Standardise the titles 
+		original.setTitle("cells_microfluidics"); 
+		aligned_stack_wells.setTitle("cells_microfluidics"); 
+		aligned_stack_cells.setTitle("cells_microfluidics"); 
+		
+		////////////////////////////////////////// Parts for tracking the cells and wells /////////////////////////////////////////////////////
 		
 		RoiManager rm = track_wells(aligned_stack_wells); 
-		ImagePlus cells_only = remove_background(rm, aligned_stack_wells, aligned_stack_cells); 
+		ImagePlus cells_only = remove_background(rm, aligned_stack_wells.duplicate(), aligned_stack_cells.duplicate());
 		// TODO improve the tracking of the cells
 		ArrayList<ArrayList<ArrayList<Double>>> cells_position = track_cells(cells_only); // Position of the cells in terms of numbers of frames, X and Y, number of cells per frame
-		draw_wells(rm, cells_position); // Draw color if cell is inside well
-		
-
-		//ImagePlus imp_ch = imp.crop("slice=2, frames=1-270");
-		//imp_ch.setTitle("test"); 
-		//imp_ch.show(); 
-		//IJ.selectWindow("test");
-		//IJ.run("Duplicate...", "duplicate slices=2");
-		//IJ.run(imp_ch, "Find Edges", "stack");
-		//IJ.run("Threshold...");
-		//IJ.setAutoThreshold(imp_ch, "Minimum dark");
-		//IJ.run("Threshold...");
-		//IJ.run(imp_ch, "Analyze Particles...", "size=150-Infinity circularity=0.00-0.13 show=[Overlay Masks] clear add stack");
-		//imp_ch.show();
+		draw_wells(rm, cells_position); // Draw color if cell is inside well 
+		ArrayList<Cell> cells[] = create_cells(cells_position, aligned_stack_cells); 
 		
 		
-		/*
-		 * double sigma = 5; double threshold = 10; ImagePlus imp = IJ.getImage(); int
-		 * nt = imp.getNFrames(); int nx = imp.getWidth(); int ny = imp.getHeight();
-		 * 
-		 * ImagePlus dog = dog(imp, sigma); ArrayList<Spot> localmax[] = localMax(dog);
-		 * ArrayList<Spot> spots[] = filter(dog, localmax, threshold);
-		 * 
-		 * // New parameters double d_max = Math.sqrt(ny*ny+nx*nx); double s_max =
-		 * Math.pow(2, imp.getBitDepth()); double lambda = 0.5; double thres = 1e-2;
-		 * boolean nearest = true;
-		 * 
-		 * 
-		 * // Loop on the frames for (int t = 0; t < nt - 1; t++) { // Loop on the spots
-		 * of the frame t for (Spot current : spots[t]) { // Loop on the spots of the
-		 * next frame for (Spot next : spots[t+1]) { // Nearest neighbour linking: first
-		 * store all the potential neighbours if(nearest) current.add_neighbour(next);
-		 * // Simple linking: link only if the cost is below a threshold else if
-		 * (current.distance(next, lambda, d_max, s_max) < thres) current.link(next); //
-		 * Then get the nearest neighbour among all the potential neighbours if(nearest)
-		 * current.get_nearest_neighbour(lambda, d_max, s_max, thres); } } } Overlay
-		 * overlay = new Overlay(); draw(overlay, spots); imp.setOverlay(overlay);
-		 */
+		////////////////////////////////////////// Parts for linking the cells /////////////////////////////////////////////////////
 		
 		
+		// Some parameters for computing the cost function for linking
+		int nt = aligned_stack_cells.getNFrames();
+		int nx = aligned_stack_cells.getWidth();
+		int ny = aligned_stack_cells.getHeight();
+		
+		double d_max = Math.sqrt(ny*ny+nx*nx); 
+		double s_max = Math.pow(2, aligned_stack_cells.getBitDepth()); 
+		double lambda = 0.5; 
+		double thres = 1e-2; 
+		boolean nearest = true; 
+		
+		
+		// Loop on the frames
+		for (int t = 0; t < nt - 1; t++) {
+			// Loop on the spots of the frame t
+			for (Cell current : cells[t]) {
+				// Loop on the spots of the next frame 
+				for (Cell next : cells[t+1]) {
+					// Nearest neighbour linking: first store all the potential neighbours
+					if(nearest)
+						current.add_neighbour(next);
+					// Simple linking: link only if the cost is below a threshold 
+					else
+						if (current.distance(next, lambda, d_max, s_max) < thres)
+							current.link(next);
+				// Then get the nearest neighbour among all the potential neighbours 
+				if(nearest)
+					current.get_nearest_neighbour(lambda, d_max, s_max, thres);
+				}
+			}
+		}
+		Overlay overlay = new Overlay();
+		draw(overlay, cells);
+		aligned_stack_cells.setOverlay(overlay);
+		aligned_stack_cells.show(); 
+		// Display the wells above the cells 
+		rm.runCommand("Show all");
 	}
-	
+		
 	
 	public ArrayList<ArrayList<ArrayList<Double>>> track_cells(ImagePlus imp) {
 			
@@ -119,7 +132,7 @@ public class CellTracker implements PlugIn {
 			//imp3.show();
 			int nt = imp2.getNFrames();
 			ArrayList<ArrayList<ArrayList<Double>>> Values_RT = new ArrayList<ArrayList<ArrayList<Double>>>();
-			for (int t = 0; t < nt-1; t++) { // loop over frames
+			for (int t = 0; t < nt; t++) { // loop over frames
 				ArrayList<ArrayList<Double>> matrix = new ArrayList<ArrayList<Double>>();
 				imp2.setSlice(t); // select slice
 				IJ.run(imp2, "Find Maxima...", "prominence=10 output=List");
@@ -141,6 +154,7 @@ public class CellTracker implements PlugIn {
 			return Values_RT;
 	}
 	
+	
 	public RoiManager track_wells(ImagePlus input) {
 		// Extract only one image as the wells do not move across time 
 		ImagePlus imp_ch = input.crop("whole-slice");
@@ -161,20 +175,23 @@ public class CellTracker implements PlugIn {
 		// Work with rois
 		IJ.run("From ROI Manager", "");
 		RoiManager rm = RoiManager.getInstance();
+		
+		// Get the results table from the ROI - for extracting the width and length of th ROI 
+		rm.runCommand(imp_ch,"List");
+		
 		return rm;
 	}
 	
 	void draw_wells(RoiManager rm, ArrayList<ArrayList<ArrayList<Double>>> cells_position) {
 		int n = rm.getCount();
-		rm.runCommand("List"); 
-		ResultsTable RT1 = ResultsTable.getResultsTable("Overlay Elements of Result of p1_stabilised_cells.tif"); //TODO: Change the title
-		double wells_width = RT1.getValue("Width", 0);	// Retrieve width of wells
-		double wells_height = RT1.getValue("Height", 0); // Retrieve height of wells
+		ResultsTable RT_wells = ResultsTable.getResultsTable("Overlay Elements of Segmented channels");
+		double wells_width = RT_wells.getValue("Width", 0);	// Retrieve width of wells
+		double wells_height = RT_wells.getValue("Height", 0); // Retrieve height of wells
 		ArrayList<Double> Xs_wells = new ArrayList<Double>();
 		ArrayList<Double> Ys_wells = new ArrayList<Double>();
-		for (int i = 0; i < RT1.size(); i++) {
-			double X = RT1.getValue("X", i); // Retrieve the position in the upper-left corner of the rectangle around the wells
-			double Y = RT1.getValue("Y", i);
+		for (int i = 0; i < RT_wells.size(); i++) {
+			double X = RT_wells.getValue("X", i); // Retrieve the position in the upper-left corner of the rectangle around the wells
+			double Y = RT_wells.getValue("Y", i);
 			Xs_wells.add(X);
 			Ys_wells.add(Y);
 		}
@@ -197,10 +214,52 @@ public class CellTracker implements PlugIn {
 				rm.runCommand("Set Color", "red"); // if not inside -> color = red
 			}
 		}
-		rm.runCommand("Show all");
+		IJ.selectWindow("Overlay Elements of Segmented channels");
+		IJ.run("Close");
+		//rm.runCommand("Show all");
+		
+	}
+	
+	
+	public ArrayList<Cell>[] create_cells(ArrayList<ArrayList<ArrayList<Double>>> cells_position, ImagePlus aligned_cells) {
+		// Get the number of frames in the image
+		int nb_f = cells_position.size();
+		ArrayList<Cell> cells[] = new ArrayList[nb_f];
+		// Iterate on the frames 
+		for(int t=0; t<=nb_f-1; t++) {
+			// Extract the X and Y positions for the frame t  
+			ArrayList<Double> Xs_cells = cells_position.get(t).get(0);
+			ArrayList<Double> Ys_cells = cells_position.get(t).get(1);
+			cells[t] = new ArrayList<Cell>();
+			// Iterate over the X and Y positions
+			for (int k=0; k<=Xs_cells.size()-1; k++) {
+				// Convert back the coordinate to int 
+				int x = Xs_cells.get(k).intValue(); 
+				int y = Ys_cells.get(k).intValue(); 
+				// Get the pixel average pixel value around the cell 
+				double i = get_avg_pixel_value(x, y, aligned_cells); 
+				// Create the spot and add it to the list
+				cells[t].add(new Cell(x, y, t, i));
+			}
+		}
+		
+		return cells; 
+	}
+	
+	public double get_avg_pixel_value(int x, int y, ImagePlus imp) {
+		double intensity = 0;
+		// Iterate on a 3x3 square around the pixel and get the pixel values 
+		for (int k = -1; k <= 1; k++)
+			for (int l = -1; l <= 1; l++)
+				intensity += new Double(imp.getPixel(x + k, y + l)[0]); // [0] should get the gray scale value 
+		// And average the values inside of this square	
+		return intensity/9;
 	}
 	
 	public ImagePlus remove_background(RoiManager rm, ImagePlus wells, ImagePlus cells) {
+		wells.setTitle("cells_microfluicis"); 
+		cells.setTitle("cells_microfluicis"); 
+		
 		Roi[] listRois  = rm.getRoisAsArray();
 		Overlay overlay = new Overlay(); 
 		for(int i=0;i<=listRois.length-1;i++) {
@@ -223,15 +282,15 @@ public class CellTracker implements PlugIn {
 		//impMask.show();
 		// Remove background to original image
 		ImagePlus imp3 = ImageCalculator.run(cells, impMask, "Subtract create stack");
-		imp3.show(); 
+		//imp3.show(); 
 		return imp3; 
 	}
 
-	private void draw(Overlay overlay, ArrayList<Spot> spots[]) {
-		int nt = spots.length;
+	private void draw(Overlay overlay, ArrayList<Cell> cells[]) {
+		int nt = cells.length;
 		for (int t = 0; t < nt; t++)
-			for (Spot spot : spots[t])
-				spot.draw(overlay);
+			for (Cell cell : cells[t])
+				cell.draw(overlay);
 	}
 
 	// Array of ArrayList of Spot, first array is per frame, the second is the number of spots per array? 
