@@ -139,6 +139,8 @@ public class CellTracker implements PlugIn {
 		// Display the wells above the cells 
 		s_rm.runCommand("Show all");
 	}
+	
+////////////////////////////////////////// All useful functions /////////////////////////////////////////////////////
 		
 	/**
 	 * A function that tracks the cells present in an image. 
