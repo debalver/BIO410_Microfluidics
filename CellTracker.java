@@ -4,19 +4,17 @@ import ij.ImagePlus;
 import ij.ImageStack;
 import ij.gui.GenericDialog;
 import ij.gui.Overlay;
-import ij.gui.PolygonRoi;
 import ij.gui.Roi;
 import ij.plugin.ImageCalculator;
 import ij.plugin.PlugIn;
 import ij.plugin.RoiEnlarger;
 import ij.plugin.frame.RoiManager;
 import ij.process.ByteProcessor;
-import ij.process.ImageProcessor;
-import ij.process.ImageStatistics;
 import ij.Prefs; 
 import ij.WindowManager; 
 import ij.gui.Overlay; 
 import ij.measure.ResultsTable;
+import javax.swing.*; 
 // No need to import Spot if it is in the same folder
 
 public class CellTracker implements PlugIn {
@@ -40,8 +38,8 @@ public class CellTracker implements PlugIn {
 		if (gui.wasOKed()) {
 			if (choice=="No") {
 				GenericDialog gui2 = new GenericDialog("Choose file");
-				gui2.addNumericField("Slice with the sharpest well: ", 1, 1); 
-				gui2.addNumericField("Slice with cells having the best contrast: ", 2, 2);
+				gui2.addNumericField("Slice with the sharpest well: ", 2); 
+				gui2.addNumericField("Slice with cells having the best contrast: ", 1);
 				gui2.addFileField("Choose the images without stabilisation: ", "/path/image");
 				gui2.showDialog();
 				align = true; 
@@ -77,16 +75,32 @@ public class CellTracker implements PlugIn {
 			int bestZ_wells = (int)slice_wells;
 			int bestZ_cells = (int)slice_cells; 
 			int lastT = original.getNFrames();
-			// Extract only the second slice in the image
-			aligned_stack_wells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_wells, bestZ_wells, 1, lastT); 
-			aligned_stack_cells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_cells, bestZ_cells, 1, lastT); 
-			// Align the images across time 
-			IJ.run(aligned_stack_wells, "StackReg ", "transformation=Affine");
-			IJ.run(aligned_stack_cells, "StackReg ", "transformation=Affine");
+			// Check if the slices for cells and wells are the same, if yes: does less computations
+			if (bestZ_wells != bestZ_cells) {
+				// Extract only the  most useful slices
+				aligned_stack_wells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_wells, bestZ_wells, 1, lastT); 
+				aligned_stack_cells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_cells, bestZ_cells, 1, lastT);
+				// Save memory and "delete" the original
+				original = null; 
+				// Align the images across time 
+				message("Starting the alignment of wells..."); 
+				IJ.run(aligned_stack_wells, "StackReg ", "transformation=Affine");
+				message("Alignment of wells done, moving to cells alignment..."); 
+				IJ.run(aligned_stack_cells, "StackReg ", "transformation=Affine");
+			} else {
+				aligned_stack_wells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_wells, bestZ_wells, 1, lastT); 
+				// Save memory and "delete" the original
+				original = null; 
+				// Align the images across time 
+				message("Aligning the images of the wells and cells...");
+				IJ.run(aligned_stack_wells, "StackReg ", "transformation=Affine");
+				aligned_stack_cells = aligned_stack_wells; 
+			}
 		} 
 		 
 		aligned_stack_wells.setTitle("cells_microfluidics"); 
-		aligned_stack_cells.setTitle("cells_microfluidics"); 
+		aligned_stack_cells.setTitle("cells_microfluidics");
+		message("Alignment done, moving to tracking!"); 
 		
 		////////////////////////////////////////// Parts for tracking the cells and wells /////////////////////////////////////////////////////
 		
@@ -108,32 +122,40 @@ public class CellTracker implements PlugIn {
 		
 		double d_max = Math.sqrt(ny*ny+nx*nx); 
 		double s_max = Math.pow(2, aligned_stack_cells.getBitDepth()); 
-		double lambda = 0.5; 
-		double thres = 5e-2; 
+		double lambda = 0.2; 
+		double thres = 5.5e-2; 
 		boolean nearest = true; 
 		
+		Overlay overlay = new Overlay();
+		// Draw the trajectories for the previous x points
+		int x = 10; 
 		
-		// Loop on the frames
-		for (int t = 0; t < nt - 1; t++) {
+		// Loop on the frames: from the second to the last 
+		for (int t = 1; t < nt; t++) {
 			// Loop on the spots of the frame t
 			for (Cell current : cells[t]) {
 				// Loop on the spots of the next frame 
-				for (Cell next : cells[t+1]) {
+				for (Cell previous : cells[t-1]) {
 					// Nearest neighbour linking: first store all the potential neighbours
 					if(nearest)
-						current.add_neighbour(next);
+						current.add_neighbour(previous);
 					// Simple linking: link only if the cost is below a threshold 
 					else
-						if (current.distance(next, lambda, d_max, s_max) < thres)
-							current.link(next);
+						if (current.distance(previous, lambda, d_max, s_max) < thres)
+							current.link_previous(previous);
 				// Then get the nearest neighbour among all the potential neighbours 
-				if(nearest)
-					current.get_nearest_neighbour(lambda, d_max, s_max, thres);
 				}
+				if(nearest) {
+					current.get_nearest_neighbour(lambda, d_max, s_max, thres);}
+				
+				// Draw the trajectory line for the last x points
+				current.draw_line(overlay, x, t); 
 			}
 		}
-		Overlay overlay = new Overlay();
-		draw(overlay, cells);
+		
+		// Draw the red square for the cell locations 
+		draw_location(overlay, cells);
+		// Display the trajectories and red squares
 		aligned_stack_cells.setOverlay(overlay);
 		aligned_stack_cells.show(); 
 		// Display the wells above the cells 
@@ -142,6 +164,8 @@ public class CellTracker implements PlugIn {
 	
 	////////////////////////////////////////// All useful functions /////////////////////////////////////////////////////
 		
+
+	
 	/**
 	 * A function that tracks the cells present in an image. 
 	 * 
@@ -346,12 +370,19 @@ public class CellTracker implements PlugIn {
 		return new Object[] {imp3, s_rm}; 
 	}
 
-	private void draw(Overlay overlay, ArrayList<Cell> cells[]) {
+	private void draw_location(Overlay overlay, ArrayList<Cell> cells[]) {
 		int nt = cells.length;
 		for (int t = 0; t < nt; t++)
 			for (Cell cell : cells[t])
 				cell.draw(overlay);
 	}
 	
+	public static void message(String msg) {
+        JOptionPane.showMessageDialog(null,
+               msg,
+               "PopUp Dialog",
+               JOptionPane.INFORMATION_MESSAGE);
+   }
+		
 	// End class
 }
