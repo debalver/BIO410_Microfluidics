@@ -104,12 +104,13 @@ public class CellTracker implements PlugIn {
 		
 		////////////////////////////////////////// Parts for tracking the cells and wells /////////////////////////////////////////////////////
 		
-		RoiManager rm = track_wells(aligned_stack_wells); 
+		RoiManager rm = track_wells(aligned_stack_wells);
+		double mean_intensity = mean_Roi_intensity(rm);
 		// Returns the masked image as well as the shrank ROIs 
 		Object[] temp  = remove_background(rm, aligned_stack_wells.duplicate(), aligned_stack_cells.duplicate());
 		ImagePlus cells_only = (ImagePlus)temp[0]; 
 		RoiManager s_rm = (RoiManager)temp[1]; 
-		ArrayList<ArrayList<ArrayList<Double>>> cells_position = track_cells(cells_only); // Position of the cells in terms of numbers of frames, X and Y, number of cells per frame
+		ArrayList<ArrayList<ArrayList<Double>>> cells_position = track_cells(cells_only, mean_intensity); // Position of the cells in terms of numbers of frames, X and Y, number of cells per frame
 		draw_wells(s_rm, cells_position); // Draw color if cell is inside well 
 		ArrayList<Cell> cells[] = create_cells(cells_position, aligned_stack_cells); 
 		
@@ -172,11 +173,12 @@ public class CellTracker implements PlugIn {
 	 * @param imp: The image used to track the cells 
 	 * @return Values_RT: A triple array containing first the frames, then X, then Y positions of the cells
 	 */
-	public ArrayList<ArrayList<ArrayList<Double>>> track_cells(ImagePlus imp) {
+	public ArrayList<ArrayList<ArrayList<Double>>> track_cells(ImagePlus imp, double mean_intensity) {
 			
 			// Get a mask with only the cells
-			//imp.setDisplayRange(2502, 2876); // TODO: Need automatic computation of these values
-			imp.setDisplayRange(2600, 2876);
+			// Get the mean intensity of every wells + a threshold to separate the wells and the cells
+			int threshold = 450;
+			imp.setDisplayRange(mean_intensity+threshold, 2876);
 			IJ.run(imp, "Apply LUT", "stack");
 			IJ.setAutoThreshold(imp, "Default no-reset");
 			Prefs.blackBackground = false;
@@ -383,6 +385,26 @@ public class CellTracker implements PlugIn {
                "PopUp Dialog",
                JOptionPane.INFORMATION_MESSAGE);
    }
+	/**
+	 * Computes the mean value of the mean intensity inside every wells.  
+	 * 
+	 * @param rm: The ROI manager containing the intensity inside the wells. 
+	 * @return : Returns the mean intensity 
+	 */
+	public double mean_Roi_intensity(RoiManager rm) {
+		double total_intensity = 0.0;
+		double mean_intensity = 0.0;
+		rm.runCommand("Measure");
+		ResultsTable RT1 = ResultsTable.getResultsTable();
+		for(int i=0; i<RT1.size() ;i++) {
+			double intensity = RT1.getValue("Mean", i);
+			total_intensity += intensity;
+		}
+		mean_intensity = total_intensity/RT1.size();
+		IJ.selectWindow("Results"); 
+		IJ.run("Close");
+		return mean_intensity;
+	}
 		
 	// End class
 }
