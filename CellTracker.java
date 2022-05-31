@@ -10,6 +10,7 @@ import ij.plugin.PlugIn;
 import ij.plugin.RoiEnlarger;
 import ij.plugin.frame.RoiManager;
 import ij.process.ByteProcessor;
+import ij.process.ImageStatistics;
 import ij.Prefs; 
 import ij.WindowManager; 
 import ij.gui.Overlay; 
@@ -46,12 +47,12 @@ public class CellTracker implements PlugIn {
 				slice_wells = gui2.getNextNumber();
 				slice_cells = gui2.getNextNumber(); 
 				String path = gui2.getNextString(); 
-				 original = IJ.openImage(path);
+				original = IJ.openImage(path);
 				
 			} else {
 				GenericDialog gui3 = new GenericDialog("Choose files");
-				gui3.addFileField("Choose the images with the sharpest wells: ", "/path/image");
-				gui3.addFileField("Choose the images with cells having the best contrast: ", "/path/image");
+				gui3.addFileField("Choose the images with the sharpest wells: ", "/path/image_wells");
+				gui3.addFileField("Choose the images with cells having the best contrast: ", "/path/image_cells");
 				gui3.showDialog();
 				
 				if (gui3.wasOKed()) {
@@ -87,6 +88,7 @@ public class CellTracker implements PlugIn {
 				IJ.run(aligned_stack_wells, "StackReg ", "transformation=Affine");
 				message("Alignment of wells done, moving to cells alignment..."); 
 				IJ.run(aligned_stack_cells, "StackReg ", "transformation=Affine");
+				message("Alignment done, moving to tracking!"); 
 			} else {
 				aligned_stack_wells = new ij.plugin.Duplicator().run(original, 1, 1, bestZ_wells, bestZ_wells, 1, lastT); 
 				// Save memory and "delete" the original
@@ -100,17 +102,17 @@ public class CellTracker implements PlugIn {
 		 
 		aligned_stack_wells.setTitle("cells_microfluidics"); 
 		aligned_stack_cells.setTitle("cells_microfluidics");
-		message("Alignment done, moving to tracking!"); 
+		
 		
 		////////////////////////////////////////// Parts for tracking the cells and wells /////////////////////////////////////////////////////
 		
 		RoiManager rm = track_wells(aligned_stack_wells);
-		double mean_intensity = mean_Roi_intensity(rm);
 		// Returns the masked image as well as the shrank ROIs 
 		Object[] temp  = remove_background(rm, aligned_stack_wells.duplicate(), aligned_stack_cells.duplicate());
 		ImagePlus cells_only = (ImagePlus)temp[0]; 
 		RoiManager s_rm = (RoiManager)temp[1]; 
-		ArrayList<ArrayList<ArrayList<Double>>> cells_position = track_cells(cells_only, mean_intensity); // Position of the cells in terms of numbers of frames, X and Y, number of cells per frame
+		Object[] stats = mean_Roi_intensity(s_rm, cells_only);
+		ArrayList<ArrayList<ArrayList<Double>>> cells_position = track_cells(cells_only, (double)stats[0], (double)stats[1]); // Position of the cells in terms of numbers of frames, X and Y, number of cells per frame
 		draw_wells(s_rm, cells_position); // Draw color if cell is inside well 
 		ArrayList<Cell> cells[] = create_cells(cells_position, aligned_stack_cells); 
 		
@@ -161,6 +163,7 @@ public class CellTracker implements PlugIn {
 		aligned_stack_cells.show(); 
 		// Display the wells above the cells 
 		s_rm.runCommand("Show all");
+	
 	}
 	
 	////////////////////////////////////////// All useful functions /////////////////////////////////////////////////////
@@ -173,26 +176,24 @@ public class CellTracker implements PlugIn {
 	 * @param imp: The image used to track the cells 
 	 * @return Values_RT: A triple array containing first the frames, then X, then Y positions of the cells
 	 */
-	public ArrayList<ArrayList<ArrayList<Double>>> track_cells(ImagePlus imp, double mean_intensity) {
+	public ArrayList<ArrayList<ArrayList<Double>>> track_cells(ImagePlus imp, double max, double std) {
 			
-			// Get a mask with only the cells
-			// Get the mean intensity of every wells + a threshold to separate the wells and the cells
-			int threshold = 450;
-			imp.setDisplayRange(mean_intensity+threshold, 2876);
+			// Get a mask with only the cells based on standard deviation and max value of the well
+			imp.setDisplayRange(max-std*1.2, max+100);
 			IJ.run(imp, "Apply LUT", "stack");
 			IJ.setAutoThreshold(imp, "Default no-reset");
 			Prefs.blackBackground = false;
 			IJ.run(imp, "Convert to Mask", "method=Default background=Light calculate");
-			ImagePlus imp2 = imp.duplicate();
-			// Blur the image 
-			IJ.run(imp2, "Gaussian Blur...", "sigma=5 stack");
-			int nt = imp2.getNFrames();
+			// Blur the image to remove non relevant particles
+			IJ.run(imp, "Gaussian Blur...", "sigma=6 stack");
+			int nt = imp.getNFrames();
 			// Triple array containing the cells positions. First dim. Frame, Second dim. X , Thrid dim. Y
 			ArrayList<ArrayList<ArrayList<Double>>> Values_RT = new ArrayList<ArrayList<ArrayList<Double>>>();
 			for (int t = 0; t < nt; t++) { // loop over frames
 				ArrayList<ArrayList<Double>> matrix = new ArrayList<ArrayList<Double>>();
-				imp2.setSlice(t); // select slice
-				IJ.run(imp2, "Find Maxima...", "prominence=10 output=List");
+				imp.setSlice(t); // select slice
+				// Find the maxima 
+				IJ.run(imp, "Find Maxima...", "prominence=10 output=List");
 				ResultsTable RT1 = ResultsTable.getResultsTable();
 				ArrayList<Double> Xs = new ArrayList<Double>();
 				ArrayList<Double> Ys = new ArrayList<Double>();
@@ -385,25 +386,32 @@ public class CellTracker implements PlugIn {
                "PopUp Dialog",
                JOptionPane.INFORMATION_MESSAGE);
    }
+	
 	/**
-	 * Computes the mean value of the mean intensity inside every wells.  
+	 * Computes the max value and standard deviation of the brightest well.    
 	 * 
-	 * @param rm: The ROI manager containing the intensity inside the wells. 
+	 * @param rm: The ROI manager containing the intensity inside the wells.
+	 * @param imp: The image on which we compute the statistics 
 	 * @return : Returns the mean intensity 
 	 */
-	public double mean_Roi_intensity(RoiManager rm) {
-		double total_intensity = 0.0;
-		double mean_intensity = 0.0;
-		rm.runCommand("Measure");
-		ResultsTable RT1 = ResultsTable.getResultsTable();
-		for(int i=0; i<RT1.size() ;i++) {
-			double intensity = RT1.getValue("Mean", i);
-			total_intensity += intensity;
+	public Object[] mean_Roi_intensity(RoiManager rm, ImagePlus imp) {
+		double max = Double.NEGATIVE_INFINITY; 
+		double std = Double.POSITIVE_INFINITY; 
+		Roi[] rois = rm.getRoisAsArray(); 
+		// Iterate on ROIs 
+		for(int i=0; i<rois.length ;i++) {
+			// Add the ROI of interest and get its statistics 
+			imp.setRoi(rois[i]);
+			ImageStatistics stats = imp.getStatistics(); 
+			// Extract the highest value and standard deviation
+			if (stats.max > max) {
+				max = stats.max; 
+				std = stats.stdDev; 
+			}
+				
+			imp.resetRoi(); 
 		}
-		mean_intensity = total_intensity/RT1.size();
-		IJ.selectWindow("Results"); 
-		IJ.run("Close");
-		return mean_intensity;
+		return new Object[] {max, std}; 
 	}
 		
 	// End class
