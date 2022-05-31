@@ -1,12 +1,10 @@
 import java.awt.Color;
 import java.util.ArrayList;
-
 import ij.gui.Line;
-import ij.gui.OvalRoi;
 import ij.gui.Overlay;
-import ij.gui.PointRoi;
-import ij.gui.PolygonRoi;
 import ij.gui.Roi;
+
+// By Quentin Devaud & Laurent Gürtler - May 2022 
 
 public class Cell {
 	public int x;
@@ -79,8 +77,6 @@ public class Cell {
 		// Link the current cell to the previous one 
 		if (a == null)
 			return;
-		//a.next = this;
-		//a.color = this.color;
 		this.previous = a; 
 		this.color = a.color; 
 	}

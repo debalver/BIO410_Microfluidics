@@ -16,7 +16,8 @@ import ij.WindowManager;
 import ij.gui.Overlay; 
 import ij.measure.ResultsTable;
 import javax.swing.*; 
-// No need to import Spot if it is in the same folder
+
+// By Quentin Devaud & Laurent Gürtler - May 2022 
 
 public class CellTracker implements PlugIn {
 	@Override
